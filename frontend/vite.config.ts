@@ -4,14 +4,12 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   server: {
-    host: true,
-    allowedHosts: [".ngrok-free.dev"],
+    allowedHosts: ["unremanded-temerariously-hershel.ngrok-free.dev"],
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8000",
+        target: "http://localhost",
         changeOrigin: true,
-        secure: false,
-        rewrite: (path) => path.replace(/^\/api/, ""), // ★これが必須
+        rewrite: (path) => path.replace(/^\/api/, "/lab/duxcall/php/api"),
       },
     },
   },

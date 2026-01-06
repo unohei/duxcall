@@ -7,13 +7,13 @@ type Api = {
     title: string;
     body?: string | null;
     priority: "high" | "normal";
-    updated_at: string;
+    updated_at?: string;
   }[];
   routes: {
     key: string;
     label: string;
     phone: string;
-    today: {
+    today?: {
       is_open: boolean;
       reason: string; // open | before_open | after_close | closed
       source?: string;
@@ -25,8 +25,6 @@ type Api = {
 
 type Hospital = { code: string; name: string; timezone?: string };
 
-// const API_BASE = "http://127.0.0.1:8000";
-// const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 const FONT_MODE_KEY = "duxcall_font_mode"; // "normal" | "large"
 const LIST_KEY = "duxcall_hospitals";
@@ -36,7 +34,8 @@ function readHospitals(): Hospital[] {
   const raw = localStorage.getItem(LIST_KEY);
   if (!raw) return [];
   try {
-    return JSON.parse(raw) as Hospital[];
+    const arr = JSON.parse(raw) as Hospital[];
+    return Array.isArray(arr) ? arr.filter((h) => h?.code) : [];
   } catch {
     return [];
   }
@@ -80,6 +79,43 @@ function reasonLabel(reason: string, nextOpenAt: string | null) {
   }
 }
 
+/**
+ * PHP版は news/routes が無い(or 空)でもOKにする
+ */
+function normalizeApi(raw: any): Api {
+  const hospital = raw?.hospital ?? {};
+  const news = Array.isArray(raw?.news) ? raw.news : [];
+  const routes = Array.isArray(raw?.routes) ? raw.routes : [];
+
+  return {
+    hospital: {
+      code: String(hospital.code ?? ""),
+      name: String(hospital.name ?? ""),
+      timezone: String(hospital.timezone ?? "Asia/Tokyo"),
+    },
+    news: news.map((n: any) => ({
+      title: String(n?.title ?? ""),
+      body: n?.body ?? null,
+      priority: n?.priority === "high" ? "high" : "normal",
+      updated_at: n?.updated_at ? String(n.updated_at) : undefined,
+    })),
+    routes: routes.map((r: any) => ({
+      key: String(r?.key ?? ""),
+      label: String(r?.label ?? ""),
+      phone: String(r?.phone ?? ""),
+      today: r?.today
+        ? {
+            is_open: Boolean(r.today.is_open),
+            reason: String(r.today.reason ?? "closed"),
+            source: r.today.source ? String(r.today.source) : undefined,
+            window: r.today.window ?? null,
+            next_open_at: r.today.next_open_at ?? null,
+          }
+        : undefined,
+    })),
+  };
+}
+
 export default function HospitalDetail() {
   const { hospitalCode } = useParams<{ hospitalCode: string }>();
   const navigate = useNavigate();
@@ -113,22 +149,35 @@ export default function HospitalDetail() {
     }
   }, [hospitalCode, navigate]);
 
-  // データ取得
+  // データ取得（PHP版：patient_hospital.php?code=xxx）
   useEffect(() => {
     if (!hospitalCode) return;
 
     setError("");
     setData(null);
 
-    fetch(`${API_BASE}/patient/hospitals/${hospitalCode}`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const url = `${API_BASE}/patient_hospital.php?code=${encodeURIComponent(
+      hospitalCode
+    )}`;
+
+    fetch(url, { method: "GET" })
+      .then(async (r) => {
+        if (!r.ok) {
+          let detail = "";
+          try {
+            const j = await r.json();
+            detail = j?.detail ? ` detail=${String(j.detail)}` : "";
+          } catch {
+            // ignore
+          }
+          throw new Error(`HTTP ${r.status}${detail} / url=${url}`);
+        }
         return r.json();
       })
-      .then(setData)
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : String(e))
-      );
+      .then((raw) => setData(normalizeApi(raw)))
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
+      });
   }, [hospitalCode]);
 
   const ui = useMemo(() => {
@@ -155,7 +204,12 @@ export default function HospitalDetail() {
             ← 連絡先一覧へ
           </Link>
         </div>
-        Error: {error}
+
+        <div style={{ color: "#b00", fontWeight: 800, marginBottom: 8 }}>
+          Error
+        </div>
+        <div style={{ whiteSpace: "pre-wrap" }}>{error}</div>
+
         <div style={{ marginTop: 12 }}>
           <button
             onClick={() => {
@@ -164,7 +218,8 @@ export default function HospitalDetail() {
                 (h) => h.code !== hospitalCode
               );
               writeHospitals(next);
-              localStorage.removeItem(CURRENT_KEY);
+              const cur = localStorage.getItem(CURRENT_KEY);
+              if (cur === hospitalCode) localStorage.removeItem(CURRENT_KEY);
               navigate("/hospitals");
             }}
             style={{
@@ -328,96 +383,128 @@ export default function HospitalDetail() {
 
       {/* routes */}
       <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
-        {data.routes.map((r) => {
-          const disabled = !r.today.is_open;
-          const windowText = r.today.window
-            ? `${r.today.window.open}〜${r.today.window.close}`
-            : "受付時間未設定";
-          const rl = reasonLabel(r.today.reason, r.today.next_open_at);
+        {data.routes.length === 0 ? (
+          <div
+            style={{
+              border: "1px solid #ddd",
+              borderRadius: ui.radius,
+              padding: ui.pad,
+              color: "#666",
+              fontSize: ui.small,
+            }}
+          >
+            連絡先（ルート）はまだ未設定です。
+          </div>
+        ) : (
+          data.routes.map((r) => {
+            const today = r.today ?? {
+              is_open: true,
+              reason: "open",
+              window: null,
+              next_open_at: null,
+            };
 
-          const statusColor =
-            rl.tone === "good" ? "#0a7" : rl.tone === "warn" ? "#b60" : "#b00";
+            const disabled = !today.is_open;
+            const windowText = today.window
+              ? `${today.window.open}〜${today.window.close}`
+              : "受付時間未設定";
 
-          return (
-            <div
-              key={r.key}
-              style={{
-                border: "1px solid #ddd",
-                borderRadius: ui.radius,
-                padding: ui.pad,
-              }}
-            >
+            const rl = reasonLabel(today.reason, today.next_open_at);
+
+            const statusColor =
+              rl.tone === "good"
+                ? "#0a7"
+                : rl.tone === "warn"
+                ? "#b60"
+                : "#b00";
+
+            return (
               <div
+                key={r.key}
                 style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: 10,
-                  marginBottom: 6,
+                  border: "1px solid #ddd",
+                  borderRadius: ui.radius,
+                  padding: ui.pad,
                 }}
               >
-                <div style={{ fontSize: ui.base * 1.1, fontWeight: 900 }}>
-                  {r.label}
-                </div>
                 <div
                   style={{
-                    color: statusColor,
-                    fontWeight: 900,
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    marginBottom: 6,
+                  }}
+                >
+                  <div style={{ fontSize: ui.base * 1.1, fontWeight: 900 }}>
+                    {r.label}
+                  </div>
+                  <div
+                    style={{
+                      color: statusColor,
+                      fontWeight: 900,
+                      fontSize: ui.small,
+                    }}
+                  >
+                    {rl.status}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    color: "#666",
+                    marginBottom: 10,
                     fontSize: ui.small,
                   }}
                 >
-                  {rl.status}
+                  受付時間：{windowText}
+                </div>
+
+                {disabled ? (
+                  <button
+                    disabled
+                    style={{
+                      width: "100%",
+                      padding: `${12 * ui.scale}px ${12 * ui.scale}px`,
+                      borderRadius: 12,
+                      border: "1px solid #ccc",
+                      background: "#f3f3f3",
+                      color: "#888",
+                      fontSize: ui.button,
+                      fontWeight: 800,
+                      cursor: "not-allowed",
+                    }}
+                  >
+                    電話できません（時間外）
+                  </button>
+                ) : (
+                  <a
+                    href={`tel:${r.phone}`}
+                    style={{
+                      display: "block",
+                      textAlign: "center",
+                      padding: `${12 * ui.scale}px ${12 * ui.scale}px`,
+                      borderRadius: 12,
+                      border: "1px solid #111",
+                      background: "#111",
+                      color: "#fff",
+                      textDecoration: "none",
+                      fontSize: ui.button,
+                      fontWeight: 900,
+                    }}
+                  >
+                    電話する（{r.phone}）
+                  </a>
+                )}
+
+                <div
+                  style={{ marginTop: 10, color: "#777", fontSize: ui.small }}
+                >
+                  ※ 受付時間外は押せません。次の受付開始を待ってください。
                 </div>
               </div>
-
-              <div
-                style={{ color: "#666", marginBottom: 10, fontSize: ui.small }}
-              >
-                受付時間：{windowText}
-              </div>
-
-              {disabled ? (
-                <button
-                  disabled
-                  style={{
-                    width: "100%",
-                    padding: `${12 * ui.scale}px ${12 * ui.scale}px`,
-                    borderRadius: 12,
-                    border: "1px solid #ccc",
-                    background: "#f3f3f3",
-                    color: "#888",
-                    fontSize: ui.button,
-                    fontWeight: 800,
-                    cursor: "not-allowed",
-                  }}
-                >
-                  電話できません（時間外）
-                </button>
-              ) : (
-                <a
-                  href={`tel:${r.phone}`}
-                  style={{
-                    display: "block",
-                    textAlign: "center",
-                    padding: `${12 * ui.scale}px ${12 * ui.scale}px`,
-                    borderRadius: 12,
-                    border: "1px solid #111",
-                    background: "#111",
-                    color: "#fff",
-                    textDecoration: "none",
-                    fontSize: ui.button,
-                    fontWeight: 900,
-                  }}
-                >
-                  電話する（{r.phone}）
-                </a>
-              )}
-
-              <div style={{ marginTop: 10, color: "#777", fontSize: ui.small }}>
-                ※ 受付時間外は押せません。次の受付開始を待ってください。
-              </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
 
       <div style={{ marginTop: 18, color: "#888", fontSize: ui.small }}>

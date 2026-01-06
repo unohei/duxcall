@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-// const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
 const LIST_KEY = "duxcall_hospitals";
@@ -41,19 +40,21 @@ export default function Register() {
       return;
     }
 
-    const url = `${API_BASE}/patient/hospitals/${hospitalCode}/register`;
+    setStatus("loading");
+    setMessage("");
 
-    fetch(url, { method: "POST" })
+    const url = `${API_BASE}/register.php?code=${encodeURIComponent(
+      hospitalCode
+    )}`;
+
+    fetch(url, { method: "POST" }) // register.phpがGET/POST両対応ならPOSTのままでOK
       .then(async (r) => {
         if (!r.ok) {
-          // FastAPIの {"detail": "..."} を拾えるなら拾う
           let detail = "";
           try {
             const j = await r.json();
             detail = j?.detail ? ` detail=${String(j.detail)}` : "";
-          } catch {
-            // ignore
-          }
+          } catch {}
           throw new Error(`HTTP ${r.status}${detail}`);
         }
         return r.json();
@@ -63,7 +64,6 @@ export default function Register() {
 
         const list = readHospitals();
         const exists = list.some((h) => h.code === hospital.code);
-
         const next = exists
           ? list.map((h) => (h.code === hospital.code ? hospital : h))
           : [...list, hospital];
@@ -85,7 +85,6 @@ export default function Register() {
   return (
     <div style={{ padding: 24, fontFamily: "sans-serif" }}>
       <h2>病院登録</h2>
-
       {status === "loading" && <p>登録しています…</p>}
       {status === "done" && <p>✅ {message}</p>}
       {status === "error" && <p style={{ color: "red" }}>❌ {message}</p>}
