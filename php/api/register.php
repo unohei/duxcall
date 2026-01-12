@@ -5,16 +5,10 @@ require_once __DIR__ . '/_cors.php';
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/_db.php';
 
-// 開発中は GET/POST どちらでもOK
-$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-if (!in_array($method, ['GET', 'POST', 'OPTIONS'], true)) {
-  json_response(['detail' => 'Method Not Allowed'], 405);
-}
+allow_methods(['GET', 'POST', 'OPTIONS']); // 開発中はGETも許可（本番ならPOSTだけに）
 
-$code = trim((string)($_GET['code'] ?? ''));
-if ($code === '') {
-  json_response(['detail' => 'hospital_code required'], 400);
-}
+$code = param_str('code');
+if ($code === '') json_response(['detail' => 'hospital_code required'], 400);
 
 $pdo = db();
 
@@ -25,35 +19,29 @@ $stmt = $pdo->prepare("
   LIMIT 1
 ");
 $stmt->execute([':code' => $code]);
-$h = $stmt->fetch(PDO::FETCH_ASSOC);
+$h = $stmt->fetch();
 
-if (!$h) {
-  json_response(['detail' => 'Hospital not found'], 404);
-}
+if (!$h) json_response(['detail' => 'Hospital not found'], 404);
 
-// ---- ここから「登録ログ」書き込み（追加） ----
+// 登録ログ（テーブルがある前提）
+$ua = $_SERVER['HTTP_USER_AGENT'] ?? null;
 try {
-  $ua = $_SERVER['HTTP_USER_AGENT'] ?? null;
-
   $ins = $pdo->prepare("
     INSERT INTO patient_registrations (hospital_code, user_agent)
     VALUES (:code, :ua)
   ");
   $ins->execute([
     ':code' => $h['hospital_code'],
-    ':ua'   => $ua ? mb_substr($ua, 0, 255) : null,
+    ':ua' => $ua ? mb_substr($ua, 0, 255) : null,
   ]);
 } catch (Throwable $e) {
-  // ログ保存が失敗しても、登録自体（病院取得）は返したいなら 200 のままでもOK
-  // きっちりしたいなら 500 を返す
-  json_response(['detail' => 'failed to write registration log'], 500);
+  // ログが無い/権限が無い等でも登録自体は通す
 }
-// ---- 追加ここまで ----
 
 json_response([
   'hospital' => [
     'code' => $h['hospital_code'],
     'name' => $h['name'],
     'timezone' => $h['timezone'],
-  ]
+  ],
 ]);
