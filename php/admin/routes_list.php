@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../lib/_util.php';
 require_once __DIR__ . '/../lib/_db.php';
+require_once __DIR__ . '/../lib/_layout.php';
 
 $pdo = db();
 
@@ -113,7 +114,7 @@ layout_start('Routes一覧', 'routes');
             <td>
               <div class="row">
                 <a class="btn sub" href="./routes_edit.php?code=<?= h(urlencode($hospitalCode)) ?>&id=<?= (int)$r['id'] ?>">編集</a>
-                <a class="btn sub" href="./weekly_hours_edit.php?code=<?= h(urlencode($hospitalCode)) ?>&route_id=<?= (int)$r['id'] ?>">曜日（受付時間）</a>
+                <a class="btn sub" href="./weekly_hours_edit.php?code=<?= h(urlencode($hospitalCode)) ?>&route_id=<?= (int)$r['id'] ?>">受付時間</a>
               </div>
             </td>
           </tr>
@@ -123,8 +124,7 @@ layout_start('Routes一覧', 'routes');
   </div>
 
   <p class="muted" style="margin-top:10px;">
-    ↑↓で並び順を入れ替えできます（隣同士をスワップ）。<br>
-    「曜日（受付時間）」で route_weekly_hours を編集します。
+    ↑↓で並び順を入れ替えできます<br>
   </p>
 
 <?php endif; ?>

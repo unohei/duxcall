@@ -80,7 +80,8 @@ function reasonLabel(reason: string, nextOpenAt: string | null) {
 }
 
 /**
- * PHP版は news/routes が無い(or 空)でもOKにする
+ * PHP版は news/routes/today が無い(or 空)でもOKにする
+ * さらに「型ゆれ（open/close が無いなど）」でも落ちないよう最低限ガード
  */
 function normalizeApi(raw: any): Api {
   const hospital = raw?.hospital ?? {};
@@ -93,26 +94,40 @@ function normalizeApi(raw: any): Api {
       name: String(hospital.name ?? ""),
       timezone: String(hospital.timezone ?? "Asia/Tokyo"),
     },
-    news: news.map((n: any) => ({
-      title: String(n?.title ?? ""),
-      body: n?.body ?? null,
-      priority: n?.priority === "high" ? "high" : "normal",
-      updated_at: n?.updated_at ? String(n.updated_at) : undefined,
-    })),
-    routes: routes.map((r: any) => ({
-      key: String(r?.key ?? ""),
-      label: String(r?.label ?? ""),
-      phone: String(r?.phone ?? ""),
-      today: r?.today
-        ? {
-            is_open: Boolean(r.today.is_open),
-            reason: String(r.today.reason ?? "closed"),
-            source: r.today.source ? String(r.today.source) : undefined,
-            window: r.today.window ?? null,
-            next_open_at: r.today.next_open_at ?? null,
-          }
-        : undefined,
-    })),
+    news: news
+      .map((n: any) => ({
+        title: String(n?.title ?? ""),
+        body: n?.body ?? null,
+        priority: n?.priority === "high" ? "high" : "normal",
+        updated_at: n?.updated_at ? String(n.updated_at) : undefined,
+      }))
+      .filter((n: any) => n.title), // タイトル空は落とす
+    routes: routes
+      .map((r: any) => {
+        const w = r?.today?.window;
+        const window =
+          w && typeof w === "object" && w.open && w.close
+            ? { open: String(w.open), close: String(w.close) }
+            : null;
+
+        const today = r?.today
+          ? {
+              is_open: Boolean(r.today.is_open),
+              reason: String(r.today.reason ?? "closed"),
+              source: r.today.source ? String(r.today.source) : undefined,
+              window,
+              next_open_at: r.today.next_open_at ?? null,
+            }
+          : undefined;
+
+        return {
+          key: String(r?.key ?? ""),
+          label: String(r?.label ?? ""),
+          phone: String(r?.phone ?? ""),
+          today,
+        };
+      })
+      .filter((r: any) => r.key && r.label), // key/label 空は落とす
   };
 }
 
@@ -163,6 +178,7 @@ export default function HospitalDetail() {
     fetch(url, { method: "GET" })
       .then(async (r) => {
         if (!r.ok) {
+          // {"detail": "..."} を拾えたら拾う
           let detail = "";
           try {
             const j = await r.json();
@@ -172,13 +188,24 @@ export default function HospitalDetail() {
           }
           throw new Error(`HTTP ${r.status}${detail} / url=${url}`);
         }
-        return r.json();
+
+        // PHPが warning を吐いて HTML になると JSON.parse で落ちるので、ここで丁寧に読む
+        const text = await r.text();
+        try {
+          return JSON.parse(text);
+        } catch {
+          throw new Error(
+            `Invalid JSON (先頭:${JSON.stringify(
+              text.slice(0, 80)
+            )}) / url=${url}`
+          );
+        }
       })
       .then((raw) => setData(normalizeApi(raw)))
       .catch((e: unknown) => {
         setError(e instanceof Error ? e.message : String(e));
       });
-  }, [hospitalCode]);
+  }, [hospitalCode, navigate]);
 
   const ui = useMemo(() => {
     const scale = fontMode === "large" ? 1.2 : 1.0;
@@ -193,6 +220,15 @@ export default function HospitalDetail() {
     };
   }, [fontMode]);
 
+  const unregisterAndBack = () => {
+    if (!hospitalCode) return;
+    const next = readHospitals().filter((h) => h.code !== hospitalCode);
+    writeHospitals(next);
+    const cur = localStorage.getItem(CURRENT_KEY);
+    if (cur === hospitalCode) localStorage.removeItem(CURRENT_KEY);
+    navigate("/hospitals");
+  };
+
   if (error) {
     return (
       <div style={{ padding: 16, fontFamily: "sans-serif" }}>
@@ -205,23 +241,14 @@ export default function HospitalDetail() {
           </Link>
         </div>
 
-        <div style={{ color: "#b00", fontWeight: 800, marginBottom: 8 }}>
+        <div style={{ color: "#b00", fontWeight: 900, marginBottom: 8 }}>
           Error
         </div>
         <div style={{ whiteSpace: "pre-wrap" }}>{error}</div>
 
         <div style={{ marginTop: 12 }}>
           <button
-            onClick={() => {
-              if (!hospitalCode) return;
-              const next = readHospitals().filter(
-                (h) => h.code !== hospitalCode
-              );
-              writeHospitals(next);
-              const cur = localStorage.getItem(CURRENT_KEY);
-              if (cur === hospitalCode) localStorage.removeItem(CURRENT_KEY);
-              navigate("/hospitals");
-            }}
+            onClick={unregisterAndBack}
             style={{
               padding: "10px 12px",
               borderRadius: 10,
@@ -366,10 +393,10 @@ export default function HospitalDetail() {
             marginTop: 14,
           }}
         >
-          <div style={{ fontWeight: 800, marginBottom: 8 }}>お知らせ</div>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>お知らせ</div>
           {data.news.slice(0, 2).map((n, idx) => (
             <div key={idx} style={{ marginBottom: 10 }}>
-              <div style={{ fontWeight: 800 }}>
+              <div style={{ fontWeight: 900 }}>
                 {n.priority === "high" ? "【重要】" : ""}
                 {n.title}
               </div>
@@ -397,12 +424,16 @@ export default function HospitalDetail() {
           </div>
         ) : (
           data.routes.map((r) => {
-            const today = r.today ?? {
-              is_open: true,
-              reason: "open",
-              window: null,
-              next_open_at: null,
-            };
+            // today が無い（PHPが未実装）なら「常に押せる」ではなく、
+            // “時間情報が無いので一旦押せる” という扱いにする（UIだけ優先）
+            const today =
+              r.today ??
+              ({
+                is_open: true,
+                reason: "open",
+                window: null,
+                next_open_at: null,
+              } as const);
 
             const disabled = !today.is_open;
             const windowText = today.window

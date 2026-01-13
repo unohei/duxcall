@@ -5,14 +5,53 @@ require_once __DIR__ . '/_cors.php';
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/_db.php';
 
-allow_methods(['GET', 'OPTIONS']);
+/**
+ * patient_hospital.php
+ * GET /api/patient_hospital.php?code=xxx
+ * - hospital / news / routes(today status) を返す
+ * - CORS: OPTIONS は即返す
+ */
 
-$code = param_str('code');
-if ($code === '') json_response(['detail' => 'hospital_code required'], 400);
+// --- Method guard（allow_methods が無い環境でも落ちないように） ---
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+
+// Preflight は即OK
+if ($method === 'OPTIONS') {
+  // _cors.php がヘッダを付けている想定
+  http_response_code(200);
+  exit;
+}
+
+if (function_exists('allow_methods')) {
+  allow_methods(['GET', 'OPTIONS']);
+} else {
+  // フォールバック
+  if ($method !== 'GET') {
+    if (function_exists('json_response')) {
+      json_response(['detail' => 'Method Not Allowed'], 405);
+    }
+    http_response_code(405);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['detail' => 'Method Not Allowed'], JSON_UNESCAPED_UNICODE);
+    exit;
+  }
+}
+
+// --- Param ---
+$code = '';
+if (function_exists('param_str')) {
+  $code = param_str('code');
+} else {
+  $code = isset($_GET['code']) ? trim((string)$_GET['code']) : '';
+}
+
+if ($code === '') {
+  json_response(['detail' => 'hospital_code required'], 400);
+}
 
 $pdo = db();
 
-// hospital
+// --- hospital ---
 $hs = $pdo->prepare("
   SELECT id, hospital_code, name, timezone
   FROM hospitals
@@ -20,33 +59,23 @@ $hs = $pdo->prepare("
   LIMIT 1
 ");
 $hs->execute([':code' => $code]);
-$hospital = $hs->fetch();
-if (!$hospital) json_response(['detail' => 'Hospital not found'], 404);
+$hospital = $hs->fetch(PDO::FETCH_ASSOC);
 
-// news
-$newsStmt = $pdo->prepare("
-  SELECT title, body, priority, updated_at
-  FROM news
-  WHERE hospital_id = :hid AND is_published = 1
-  ORDER BY updated_at DESC
-  LIMIT 10
-");
-$newsStmt->execute([':hid' => $hospital['id']]);
-$news = $newsStmt->fetchAll();
+if (!$hospital) {
+  json_response(['detail' => 'Hospital not found'], 404);
+}
 
-// routes
-$routesStmt = $pdo->prepare("
-  SELECT id, `key`, label, phone, sort_order
-  FROM routes
-  WHERE hospital_id = :hid AND is_enabled = 1
-  ORDER BY sort_order ASC
-");
-$routesStmt->execute([':hid' => $hospital['id']]);
-$routes = $routesStmt->fetchAll();
+// timezone（不正でも落ちないように）
+$tzName = (string)($hospital['timezone'] ?? 'Asia/Tokyo');
+try {
+  $tz = new DateTimeZone($tzName ?: 'Asia/Tokyo');
+} catch (Throwable $e) {
+  $tz = new DateTimeZone('Asia/Tokyo');
+}
 
-$tz = new DateTimeZone($hospital['timezone'] ?: 'Asia/Tokyo');
 $now = new DateTimeImmutable('now', $tz);
 
+// --- helper functions ---
 function time_to_hm(?string $t): ?string {
   if (!$t) return null;
   // "HH:MM:SS" -> "HH:MM"
@@ -58,6 +87,11 @@ function combine_dt(DateTimeImmutable $d, string $hm, DateTimeZone $tz): DateTim
   return new DateTimeImmutable($d->format('Y-m-d') . ' ' . $hm . ':00', $tz);
 }
 
+/**
+ * その日のスケジュールを返す
+ * - exception があれば優先
+ * - なければ weekly
+ */
 function get_schedule_for_date(PDO $pdo, int $routeId, DateTimeImmutable $date, DateTimeZone $tz): array {
   $dow = (int)$date->format('N') - 1; // Mon=0..Sun=6
   $d = $date->format('Y-m-d');
@@ -73,7 +107,7 @@ function get_schedule_for_date(PDO $pdo, int $routeId, DateTimeImmutable $date, 
     LIMIT 1
   ");
   $ex->execute([':rid' => $routeId, ':d' => $d]);
-  $exRow = $ex->fetch();
+  $exRow = $ex->fetch(PDO::FETCH_ASSOC);
 
   if ($exRow) {
     $eh = $pdo->prepare("
@@ -83,13 +117,13 @@ function get_schedule_for_date(PDO $pdo, int $routeId, DateTimeImmutable $date, 
       LIMIT 1
     ");
     $eh->execute([':eid' => $exRow['id'], ':dow' => $dow]);
-    $ehRow = $eh->fetch();
+    $ehRow = $eh->fetch(PDO::FETCH_ASSOC);
 
     if ($ehRow) {
       return [
         'source' => 'exception',
-        'title' => $exRow['title'],
-        'is_closed' => (int)$ehRow['is_closed'] === 1,
+        'title' => $exRow['title'] ?? null,
+        'is_closed' => (int)($ehRow['is_closed'] ?? 1) === 1,
         'open_hm' => time_to_hm($ehRow['open_time'] ?? null),
         'close_hm' => time_to_hm($ehRow['close_time'] ?? null),
       ];
@@ -104,13 +138,13 @@ function get_schedule_for_date(PDO $pdo, int $routeId, DateTimeImmutable $date, 
     LIMIT 1
   ");
   $wh->execute([':rid' => $routeId, ':dow' => $dow]);
-  $whRow = $wh->fetch();
+  $whRow = $wh->fetch(PDO::FETCH_ASSOC);
 
   if ($whRow) {
     return [
       'source' => 'weekly',
       'title' => null,
-      'is_closed' => (int)$whRow['is_closed'] === 1,
+      'is_closed' => (int)($whRow['is_closed'] ?? 1) === 1,
       'open_hm' => time_to_hm($whRow['open_time'] ?? null),
       'close_hm' => time_to_hm($whRow['close_time'] ?? null),
     ];
@@ -147,7 +181,7 @@ function compute_today(PDO $pdo, int $routeId, DateTimeImmutable $now, DateTimeZ
   $today = new DateTimeImmutable($now->format('Y-m-d'), $tz);
   $sch = get_schedule_for_date($pdo, $routeId, $today, $tz);
 
-  $isClosed = $sch['is_closed'];
+  $isClosed = (bool)$sch['is_closed'];
   $openHm = $sch['open_hm'];
   $closeHm = $sch['close_hm'];
 
@@ -167,7 +201,7 @@ function compute_today(PDO $pdo, int $routeId, DateTimeImmutable $now, DateTimeZ
   }
 
   $start = combine_dt($today, $openHm, $tz);
-  $end = combine_dt($today, $closeHm, $tz);
+  $end   = combine_dt($today, $closeHm, $tz);
 
   if ($start <= $now && $now < $end) {
     return [
@@ -178,6 +212,7 @@ function compute_today(PDO $pdo, int $routeId, DateTimeImmutable $now, DateTimeZ
       'next_open_at' => null,
     ];
   }
+
   if ($now < $start) {
     return [
       'is_open' => false,
@@ -187,6 +222,7 @@ function compute_today(PDO $pdo, int $routeId, DateTimeImmutable $now, DateTimeZ
       'next_open_at' => $start->format(DateTimeInterface::ATOM),
     ];
   }
+
   return [
     'is_open' => false,
     'reason' => 'after_close',
@@ -196,27 +232,59 @@ function compute_today(PDO $pdo, int $routeId, DateTimeImmutable $now, DateTimeZ
   ];
 }
 
+// --- news ---
+$newsStmt = $pdo->prepare("
+  SELECT title, body, priority, updated_at
+  FROM news
+  WHERE hospital_id = :hid AND is_published = 1
+  ORDER BY updated_at DESC
+  LIMIT 10
+");
+$newsStmt->execute([':hid' => $hospital['id']]);
+$news = $newsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+// --- routes ---
+$routesStmt = $pdo->prepare("
+  SELECT id, `key`, label, phone, sort_order
+  FROM routes
+  WHERE hospital_id = :hid AND is_enabled = 1
+  ORDER BY sort_order ASC
+");
+$routesStmt->execute([':hid' => $hospital['id']]);
+$routes = $routesStmt->fetchAll(PDO::FETCH_ASSOC);
+
 $outRoutes = [];
 foreach ($routes as $r) {
   $outRoutes[] = [
-    'key' => $r['key'],
-    'label' => $r['label'],
-    'phone' => $r['phone'],
+    'key' => (string)($r['key'] ?? ''),
+    'label' => (string)($r['label'] ?? ''),
+    'phone' => (string)($r['phone'] ?? ''),
     'today' => compute_today($pdo, (int)$r['id'], $now, $tz),
   ];
 }
 
 json_response([
   'hospital' => [
-    'code' => $hospital['hospital_code'],
-    'name' => $hospital['name'],
-    'timezone' => $hospital['timezone'],
+    'code' => (string)$hospital['hospital_code'],
+    'name' => (string)$hospital['name'],
+    'timezone' => (string)($hospital['timezone'] ?? 'Asia/Tokyo'),
   ],
-  'news' => array_map(fn($n) => [
-    'title' => $n['title'],
-    'body' => $n['body'],
-    'priority' => $n['priority'],
-    'updated_at' => (new DateTimeImmutable($n['updated_at'], $tz))->format(DateTimeInterface::ATOM),
-  ], $news),
+  'news' => array_map(function($n) use ($tz) {
+    $updated = $n['updated_at'] ?? null;
+    $atom = null;
+    if ($updated) {
+      try {
+        $atom = (new DateTimeImmutable((string)$updated, $tz))->format(DateTimeInterface::ATOM);
+      } catch (Throwable $e) {
+        $atom = null;
+      }
+    }
+    return [
+      'title' => (string)($n['title'] ?? ''),
+      'body' => $n['body'] ?? null,
+      'priority' => (($n['priority'] ?? 'normal') === 'high') ? 'high' : 'normal',
+      'updated_at' => $atom,
+    ];
+  }, $news),
   'routes' => $outRoutes,
 ]);

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../lib/_util.php';
 require_once __DIR__ . '/../lib/_db.php';
+require_once __DIR__ . '/../lib/_layout.php'; 
 
 $pdo = db();
 
@@ -105,12 +106,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
   }
 }
 
-layout_start('曜日（受付時間）', 'routes');
+layout_start('受付時間', 'routes');
 ?>
 
 <div class="row" style="justify-content:space-between; align-items:flex-end;">
   <div>
-    <h1 style="margin:0 0 6px;">曜日（受付時間）</h1>
+    <h1 style="margin:0 0 6px;">受付時間</h1>
     <div class="muted">
       病院：<strong><?= h((string)$ctx['hospital_name']) ?></strong> / ルート：<strong><?= h((string)$ctx['label']) ?></strong>
       <span class="muted">（key: <?= h((string)$ctx['key']) ?>）</span>
@@ -118,7 +119,7 @@ layout_start('曜日（受付時間）', 'routes');
   </div>
 
   <div class="row">
-    <a class="btn sub" href="./routes_list.php?code=<?= h(urlencode($hospitalCode)) ?>">← ルート一覧へ戻る</a>
+    <a class="btn sub" href="./routes_list.php?code=<?= h(urlencode($hospitalCode)) ?>">一覧へ戻る</a>
   </div>
 </div>
 
@@ -158,18 +159,18 @@ layout_start('曜日（受付時間）', 'routes');
 
             <td>
               <input class="input"
-                     type="time"
-                     name="open[<?= $dow ?>]"
-                     value="<?= h((string)$v['open']) ?>"
-                     <?= $isClosed ? 'disabled' : '' ?>>
+                    type="time"
+                    name="open[<?= $dow ?>]"
+                    value="<?= h((string)$v['open']) ?>"
+                    <?= $isClosed ? 'disabled' : '' ?>>
             </td>
 
             <td>
               <input class="input"
-                     type="time"
-                     name="close[<?= $dow ?>]"
-                     value="<?= h((string)$v['close']) ?>"
-                     <?= $isClosed ? 'disabled' : '' ?>>
+                    type="time"
+                    name="close[<?= $dow ?>]"
+                    value="<?= h((string)$v['close']) ?>"
+                    <?= $isClosed ? 'disabled' : '' ?>>
             </td>
 
             <td class="muted">※ 時間が片方だけの場合は「休み」扱いで保存します</td>

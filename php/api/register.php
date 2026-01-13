@@ -5,27 +5,35 @@ require_once __DIR__ . '/_cors.php';
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/_db.php';
 
-allow_methods(['GET', 'POST', 'OPTIONS']); // 開発中はGETも許可（本番ならPOSTだけに）
+// 開発中：GET/POST許可（本番は require_method('POST'); 推奨）
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+if (!in_array($method, ['GET','POST','OPTIONS'], true)) {
+  json_response(['detail' => 'Method Not Allowed'], 405);
+}
 
-$code = param_str('code');
-if ($code === '') json_response(['detail' => 'hospital_code required'], 400);
+$code = trim((string)($_GET['code'] ?? ''));
+if ($code === '') {
+  json_response(['detail' => 'hospital_code required'], 400);
+}
 
 $pdo = db();
 
+// hospital
 $stmt = $pdo->prepare("
-  SELECT hospital_code, name, timezone
+  SELECT id, hospital_code, name, timezone
   FROM hospitals
   WHERE hospital_code = :code AND is_active = 1
   LIMIT 1
 ");
 $stmt->execute([':code' => $code]);
 $h = $stmt->fetch();
+if (!$h) {
+  json_response(['detail' => 'Hospital not found'], 404);
+}
 
-if (!$h) json_response(['detail' => 'Hospital not found'], 404);
-
-// 登録ログ（テーブルがある前提）
-$ua = $_SERVER['HTTP_USER_AGENT'] ?? null;
+// registration log（テーブル無い場合はここをコメントアウトでもOK）
 try {
+  $ua = $_SERVER['HTTP_USER_AGENT'] ?? null;
   $ins = $pdo->prepare("
     INSERT INTO patient_registrations (hospital_code, user_agent)
     VALUES (:code, :ua)
@@ -35,7 +43,7 @@ try {
     ':ua' => $ua ? mb_substr($ua, 0, 255) : null,
   ]);
 } catch (Throwable $e) {
-  // ログが無い/権限が無い等でも登録自体は通す
+  // ログテーブルが無い/権限が無い等でも、登録自体は返す
 }
 
 json_response([
