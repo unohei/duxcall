@@ -1,95 +1,62 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 
 export default function QrTest() {
   const [text, setText] = useState("tokyo-clinic");
+  const [dataUrl, setDataUrl] = useState<string>("");
+  const [error, setError] = useState<string>("");
 
-  const dataUrl = useMemo(async () => {
-    return await QRCode.toDataURL(text, { margin: 2, width: 260 });
-  }, [text]);
+  useEffect(() => {
+    let cancelled = false;
+    setError("");
 
-  const [img, setImg] = useState<string>("");
+    (async () => {
+      try {
+        const url = await QRCode.toDataURL(text, { margin: 1, scale: 6 });
+        if (!cancelled) setDataUrl(url);
+      } catch (e: any) {
+        if (!cancelled) setError(e?.message ?? String(e));
+      }
+    })();
 
-  useMemo(() => {
-    (async () =>
-      setImg(await QRCode.toDataURL(text, { margin: 2, width: 260 })))();
+    return () => {
+      cancelled = true;
+    };
   }, [text]);
 
   return (
-    <div
-      style={{
-        padding: 24,
-        fontFamily: "sans-serif",
-        maxWidth: 560,
-        margin: "0 auto",
-      }}
-    >
+    <div style={{ padding: 16, fontFamily: "sans-serif", maxWidth: 520 }}>
       <h2 style={{ marginTop: 0 }}>QRテスト</h2>
 
-      <div style={{ display: "grid", gap: 8 }}>
-        <label style={{ fontWeight: 800 }}>QRの中身</label>
-        <input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          style={{
-            padding: "10px 12px",
-            borderRadius: 10,
-            border: "1px solid #ddd",
-            fontSize: 16,
-          }}
-        />
+      <label style={{ fontWeight: 800 }}>QRにする文字</label>
+      <input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        style={{
+          width: "100%",
+          padding: 12,
+          borderRadius: 12,
+          border: "1px solid #ddd",
+          marginTop: 6,
+          fontSize: 16,
+        }}
+      />
 
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button
-            onClick={() => setText("tokyo-clinic")}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: "#fff",
-              fontWeight: 800,
-            }}
-          >
-            コードだけ
-          </button>
-          <button
-            onClick={() =>
-              setText("http://localhost:5173/register/tokyo-clinic")
-            }
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: "#fff",
-              fontWeight: 800,
-            }}
-          >
-            URL形式
-          </button>
+      {error && (
+        <div style={{ marginTop: 12, color: "#b00", fontWeight: 800 }}>
+          {error}
         </div>
-      </div>
+      )}
 
-      <div style={{ marginTop: 14 }}>
-        {img ? (
+      {dataUrl && (
+        <div style={{ marginTop: 14 }}>
           <img
-            src={img}
+            src={dataUrl}
             alt="qr"
-            style={{
-              width: 260,
-              height: 260,
-              border: "1px solid #ddd",
-              borderRadius: 12,
-            }}
+            style={{ width: 220, height: 220, border: "1px solid #ddd" }}
           />
-        ) : (
-          "生成中..."
-        )}
-      </div>
-
-      <div style={{ marginTop: 10, color: "#666" }}>
-        これを別端末（スマホなど）で表示して、<code>/scan</code>{" "}
-        で読み取ってください。
-      </div>
+        </div>
+      )}
     </div>
   );
 }

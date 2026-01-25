@@ -1,8 +1,12 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/_auth.php';
+require_staff_login();
+
 require_once __DIR__ . '/../lib/_util.php';
 require_once __DIR__ . '/../lib/_db.php';
+require_once __DIR__ . '/../lib/_layout.php';
 
 require_method('POST');
 

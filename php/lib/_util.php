@@ -1,38 +1,48 @@
 <?php
 declare(strict_types=1);
 
-/**
- * 共通ユーティリティ
- * - json_response()
- * - require_method()
- * - redirect()
- */
+function h(string $s): string {
+  return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
 
-function json_response(array $data, int $status = 200): never {
-  http_response_code($status);
-  header('Content-Type: application/json; charset=utf-8');
-  // JSON以外を混ぜない（warningが出ると壊れるので、ここで必ず終了）
-  echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+function redirect(string $to): never {
+  header('Location: ' . $to);
   exit;
 }
 
 function require_method(string $method): void {
   $m = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-  if ($m === 'OPTIONS') return; // preflightは通す（CORS側で処理）
   if (strtoupper($m) !== strtoupper($method)) {
-    json_response(['detail' => 'Method Not Allowed'], 405);
+    http_response_code(405);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('Method Not Allowed');
   }
 }
 
-function redirect(string $to): never {
-  header('Location: ' . $to, true, 302);
+function allow_methods(array $methods): void {
+  $m = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
+  $methods = array_map('strtoupper', $methods);
+
+  if ($m === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+  }
+  if (!in_array($m, $methods, true)) {
+    http_response_code(405);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('Method Not Allowed');
+  }
+}
+
+function json_response(array $data, int $status = 200): never {
+  http_response_code($status);
+  header('Content-Type: application/json; charset=utf-8');
+  echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
   exit;
 }
 
-function h(string $s): string {
-  return htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
-}
-
-function qs(array $params): string {
-  return http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+function param_str(string $key, string $default = ''): string {
+  $v = $_GET[$key] ?? $_POST[$key] ?? $default;
+  if (!is_string($v)) return $default;
+  return trim($v);
 }

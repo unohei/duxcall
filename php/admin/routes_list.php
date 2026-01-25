@@ -1,6 +1,9 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/_auth.php';
+require_staff_login();
+
 require_once __DIR__ . '/../lib/_util.php';
 require_once __DIR__ . '/../lib/_db.php';
 require_once __DIR__ . '/../lib/_layout.php';
@@ -51,6 +54,7 @@ layout_start('Routes一覧', 'routes');
   </div>
 
   <div class="row">
+    <a class="btn sub" href="./logout.php">ログアウト</a>
     <a class="btn" href="./routes_edit.php?code=<?= h(urlencode($hospitalCode)) ?>">＋ 項目を追加</a>
   </div>
 </div>

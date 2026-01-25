@@ -1,9 +1,12 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/_config.php';
-require_once __DIR__ . '/_util.php';
-require_once __DIR__ . '/_db.php';
+require_once __DIR__ . '/_auth.php';
+require_staff_login();
+
+require_once __DIR__ . '/../lib/_util.php';
+require_once __DIR__ . '/../lib/_db.php';
+require_once __DIR__ . '/../lib/_layout.php';
 
 /**
  * routes_edit.php（管理画面）
@@ -11,12 +14,12 @@ require_once __DIR__ . '/_db.php';
  * - 保存ボタンは1つに統一
  * - 戻るボタンあり（一覧へ）
  * - admin_header/admin_footer が無い環境でも落ちないようにフォールバック実装
+ * - 重要：ADMIN_HOSPITAL_CODE を廃止し、ログイン中スタッフの hospital_id（SESSION）で絞り込み
  */
 
 // --- fallback: admin_header / admin_footer が未定義でも動く ---
 if (!function_exists('admin_header')) {
   function admin_header(string $title): void {
-    // _util.php 側に h() がある想定。無い場合に備えて最低限も。
     if (!function_exists('h')) {
       function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
     }
@@ -68,16 +71,31 @@ HTML;
   }
 }
 
-// --- DB / hospital fixed ---
+// --- DB ---
 $pdo = db();
 
-$hs = $pdo->prepare("SELECT id, hospital_code, name FROM hospitals WHERE hospital_code=:c LIMIT 1");
-$hs->execute([':c' => ADMIN_HOSPITAL_CODE]);
+// --- hospital: ログイン中スタッフの病院に固定 ---
+if (session_status() !== PHP_SESSION_ACTIVE) {
+  session_start();
+}
+$hospitalId = (int)($_SESSION['hospital_id'] ?? 0);
+
+if ($hospitalId <= 0) {
+  // セッションに病院情報が無い = login.php でセットできてない
+  // ここで気づけるようにメッセージを出す
+  admin_header('ルート編集');
+  echo '<div class="card"><b>hospital_id がセッションにありません。login.php の成功時に $_SESSION["hospital_id"] をセットしてください。</b></div>';
+  admin_footer();
+  exit;
+}
+
+$hs = $pdo->prepare("SELECT id, hospital_code, name FROM hospitals WHERE id=:id LIMIT 1");
+$hs->execute([':id' => $hospitalId]);
 $hospital = $hs->fetch(PDO::FETCH_ASSOC);
 
 if (!$hospital) {
   admin_header('ルート編集');
-  echo '<div class="card"><b>病院が見つかりません</b></div>';
+  echo '<div class="card"><b>病院が見つかりません（hospital_id=' . h((string)$hospitalId) . '）</b></div>';
   admin_footer();
   exit;
 }
@@ -99,10 +117,10 @@ $route = [
 // --- load if edit ---
 if ($isEdit) {
   $st = $pdo->prepare("SELECT * FROM routes WHERE id=:id AND hospital_id=:hid LIMIT 1");
-  $st->execute([':id' => $id, ':hid' => $hospital['id']]);
+  $st->execute([':id' => $id, ':hid' => (int)$hospital['id']]);
   $row = $st->fetch(PDO::FETCH_ASSOC);
   if (!$row) {
-    header('Location: routes_list.php');
+    header('Location: routes_list.php?msg=' . urlencode('対象のルートが見つかりません'));
     exit;
   }
   $route = $row;
@@ -131,7 +149,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
       if ($isEdit) {
         // key uniqueness per hospital
         $chk = $pdo->prepare("SELECT id FROM routes WHERE hospital_id=:hid AND `key`=:k AND id<>:id LIMIT 1");
-        $chk->execute([':hid'=>$hospital['id'], ':k'=>$key, ':id'=>$id]);
+        $chk->execute([':hid'=>(int)$hospital['id'], ':k'=>$key, ':id'=>$id]);
         if ($chk->fetch()) {
           $error = 'このキーは既に使われています（別のキーにしてください）';
         } else {
@@ -142,14 +160,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
           ");
           $up->execute([
             ':k'=>$key, ':l'=>$label, ':p'=>$phone, ':s'=>$sort, ':e'=>$enabled,
-            ':id'=>$id, ':hid'=>$hospital['id'],
+            ':id'=>$id, ':hid'=>(int)$hospital['id'],
           ]);
           $flash = '保存しました。';
         }
       } else {
         // key uniqueness per hospital
         $chk = $pdo->prepare("SELECT id FROM routes WHERE hospital_id=:hid AND `key`=:k LIMIT 1");
-        $chk->execute([':hid'=>$hospital['id'], ':k'=>$key]);
+        $chk->execute([':hid'=>(int)$hospital['id'], ':k'=>$key]);
         if ($chk->fetch()) {
           $error = 'このキーは既に使われています（別のキーにしてください）';
         } else {
@@ -158,7 +176,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             VALUES (:hid, :k, :l, :p, :e, :s)
           ");
           $ins->execute([
-            ':hid'=>$hospital['id'],
+            ':hid'=>(int)$hospital['id'],
             ':k'=>$key, ':l'=>$label, ':p'=>$phone, ':e'=>$enabled, ':s'=>$sort,
           ]);
           $id = (int)$pdo->lastInsertId();
@@ -170,7 +188,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
       // reload
       if ($error === '') {
         $st = $pdo->prepare("SELECT * FROM routes WHERE id=:id AND hospital_id=:hid LIMIT 1");
-        $st->execute([':id' => $id, ':hid' => $hospital['id']]);
+        $st->execute([':id' => $id, ':hid' => (int)$hospital['id']]);
         $route = $st->fetch(PDO::FETCH_ASSOC) ?: $route;
       } else {
         // keep posted values on screen
@@ -215,9 +233,7 @@ admin_header($isEdit ? '項目編集' : '項目追加');
       <div>
         <label><b>キー（英数字）</b></label>
         <input type="text" name="key" value="<?= h((string)($route['key'] ?? '')) ?>" placeholder="例: reservation / visit" required>
-        <div class="help">
-          システム内部で使う識別子です（例：reservation、visit）
-        </div>
+        <div class="help">システム内部で使う識別子です（例：reservation、visit）</div>
       </div>
 
       <div>
