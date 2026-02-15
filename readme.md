@@ -1,9 +1,9 @@
 # Dux Call（病院連絡支援システム）
 
-## 0.2.0 本番デプロイ対応・管理画面ログイン実装
+## 0.2.0 本番デプロイ対応
 
 <p align="left">
-  <img src="screenshots/病院情報管理一覧.png" width="70%" />
+  <img src="screenshots/患者画面.png" width="60%" />
 </p>
 
 QRコードで病院を登録し、  
@@ -49,7 +49,7 @@ QRコードで病院を登録し、
 ### 病院側（管理画面）
 
 <p align="left">
-  <img src="screenshots/項目登録画面.png" width="60%" />
+  <img src="screenshots/病院情報管理一覧.png" width="60%" />
 </p>
 
 - スタッフログイン（session 管理）
