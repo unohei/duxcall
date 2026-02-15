@@ -3,7 +3,7 @@
 ## 0.2.0 本番デプロイ対応
 
 <p align="left">
-  <img src="screenshots/患者画面.png" width="60%" />
+  <img src="screenshots/患者画面.png" width="30%" />
 </p>
 
 QRコードで病院を登録し、  
